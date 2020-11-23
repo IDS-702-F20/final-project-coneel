@@ -1,0 +1,369 @@
+---
+title: "Identifying Value in the NFL Draft"
+author: "Caleb ONeel"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE)
+library(knitr)
+library(dplyr)
+library(ggplot2)
+library(lme4)
+library(pander)
+library(xtable)
+library(kableExtra)
+library(arm)
+library(rms) 
+library(pROC)
+library(e1071)
+library(caret)
+library(tidyverse)
+require(gridExtra)
+library(broom)
+library(sjPlot)
+library(readr)
+library(tidyr)
+library(broom)
+df <- read.csv("/Users/caleboneel/Desktop/final-project-coneel/Data/finaldata.csv")
+
+df$Position <- factor(df$Position)
+df$Round <- factor(df$Round)
+df$Team <- factor(df$Team)
+df$X40ydCent <- df$X40yd - mean(df$X40yd)
+df$BenchCent <- df$Bench - mean(df$Bench)
+df$HtCent <- df$Ht - mean(df$Ht)
+df$WtCent <- df$Wt - mean(df$Wt)
+
+```
+
+I. Summary
+
+This study examines historical NFL player data to find factors that have been overlooked predictors of how good a player will be, and which NFL teams have been good at drafting and developing talent for the past decade. The variables were a mix of physical attributes that are measured at the NFL draft combine and several categorical variables such as the players position, NFL team that drafted them, and what round they were selected in. To examine the relationship between these factors and the players performance, I tested both Hierarchical models and linear models before ultimately landing on a multiple linear regression model. 
+
+
+II. Introduction:
+
+In this assignment I aggregated various data sources to look for predictors of a players on field performance relative to their expectations based on draft position. I quantified the players on field performances by using Pro Football Focus’s player rating data, and determined their expected performance by what pick they were drafted. I calculated the “expected value” for a player taken at each pick in the draft by taking the player grade for every player selected at that pick in the ten drafts in my dataset. I used a rolling average for the 10 picks around them to smooth out the variance caused by thin sample size. Then, I subtracted the expected player grade based on draft position from every player's career player grade to generate a value score, with 0 meaning they met expectations of where they were drafted. This value score for each player is what I ultimately use for the dependent variable in my analysis.
+
+In the NFL, there is an annual “Draft Combine" where hundreds of college football players that submitted their candidacy to the NFL draft are invited to showcase their abilities. At this combine, they perform a number of drills designed to measure their athleticism and physical attributes. These measurements are believed to have some predictive power on how the player will translate to the NFL. In addition to the physical attributes measured at the draft combine, I want to look at other variables such as the team that drafted them, the round they were selected in, and the position they play. All three of these factors could potentially have important roles in determining how well a player performs. The team that drafts them has the important job of developing the player, and their ability to develop a given player varies with the coaching, training and support staff at a given organization. 
+
+
+III. Data
+
+The data I used in this study came primarily from Pro Football Focus and Football Reference. I used Pro Football Focus for the player performance, and Football Reference for draft information and combine measurements spanning the years 2010 to 2019. The players performances were quantified using Pro Football Focuses player grade data. This player grade data is very highly regarded and is used by professional gamblers, media organizations, and even NFL teams. Each player is graded for every snap of every game they play in. The graders are full time employees made up in large part of former NFL scouts, and analysts. Each grade is reviewed by multiple people. PFF adds much more context than traditional stats. Traditional statistics cannot differentiate between a simple screen pass that a receiver runs for 50 yards and a perfectly thrown pass into double coverage that the receiver catches. These both appear as 50 passing yards on a score sheet, but the second throw is exponentially harder to execute from the Quarterbacks perspective. Each player is given a grade of -2 to +2 in 0.5 increments on a given play with 0 generally being the average or “expected” grade. 
+
+Joining these two sources together was an extremely challenging and time consuming process. Profootball Focus data is very guarded and unavailable for extraction and manipulation. I worked with the PFF support staff to get access to the data, however the information I needed was spread over many different worksheets and datasets. Aggregating and organizing all these datasets together presented a unique set of challenges, and a lot of cleaning, name normalization and general work with the Regular Expression package in python. Merging the data from PFF with the information from Football reference was even more difficult. Ten years worth of draft information leads to many duplicate names, mismatched abbreviated names, and inconsistently punctuated names for the ones with hyphens, periods and apostrophes in them. 
+
+The data had no missing values for Round, Position, Team, or Player grade, but the draft measurements were a little spottier. Draft prospects will sometimes decline to participate in an event, and as a result somewhere between 10% to 15% of entries had missing rows for the continuous variables I used. There were a number of players in the dataset who declined to participate in any of these drills. Since these players were missing so many columns, I excluded them from the dataset. For the remaining players that were missing values, simply taking the population averages would not be a good reflection because there is too much difference between players from differnt positions for these different drills. For example, I would not expect an offensive lineman to be nearly as fast in the 40yd dash as a defensive back, just like I would not expect a defensive back to be nearly as many bench reps as the average offensive lineman. Similarly, I did not think assigning players values based on players that “look” like them with similar draft rounds, heights and weights would solve this problem either. In my opinion, the best option for populating these values was to take the mean for each column based on the players position. 
+
+After cleaning the data to the point it was ready to be used for analysis, I performed a general EDA. A histogram revealed that my response variable player grade has a very even distribution as shown below. 
+```{r, message=FALSE, warning=FALSE, out.width="50%"}
+hist(df$value)
+
+
+```
+
+My response variable is “value” and is the delta between a players player grade and their expected player grade based upon draft position. It is a continuous variable that should have an average of roughly 0. From my initial exploration, it did not appear that it would require a transformation. For my independent variables, I factored Round, Team and Position as these three are categorical. Additionally, I mean centered 40yard dash time, bench press reps, height and weight before putting them into a model to help with interpretation.
+
+One of the most interesting graphs I found in my EDA was the relationship between value and 40yard dash time, binned by position. The best fit lines for each position do not appear to be consistent. Defensive Backs, Wide Receivers, and running backs all have lines with increasing slopes for a slower 40 yard dash time while Defensive End and Quarterback have decreasing slopes with a slower 40 yard dash time. Although it will require further analysis to discover if this is statistically significant, it appears that speed could be overvalued for Defensive Backs, Running Backs and Receivers while it is undervalued for Quarterbacks and Defensive ends. 
+
+```{r, message=FALSE, warning=FALSE, out.width="50%"}
+ggplot(df, aes(x=X40yd, y=value)) + geom_point() + facet_wrap(~Position) + geom_smooth(method="lm",col="red3")
+
+```
+
+
+
+IV. Model
+
+I attempted quite a few iterations of different linear models, both hierarchical and multiple linear regression. I used a baseline model with all variables, and the interaction between position and each of my continuous variables. Ultimately, I believe the multiple linear regression model shown below gave me the best results and fewest problems with model assumptions. The equation and output of my final model can be seen below: 
+$$y_{i} = \beta_{0} + \beta_{1}Team + \beta_{2}Position + \beta_{3}Round + \beta_{4}HeightCentered + \beta_{5}Round + \beta_{6}40yd + \beta_{7}Position:40yd$$
+```{r}
+model4 <- lm(value ~ Position + HtCent + X40ydCent + BenchCent +  Team + Position:X40ydCent, data = df)
+#pander(summary(model4))
+
+model4 %>%
+  tidy() %>%
+  kable() %>%
+  kable_styling(font_size = 4)
+```
+
+This final model has an R-square of .08. This may seem low, but I would expect to be able to identify strong predictors of value with the amount of luck, variance, intangibles, and other factors not captured in this study that go into the deviance between a players performance and expected performance. I arrived at this final model by comparing R-squares, as well as checking assumptions, running a stepwise AIC test in both directions, and comparing lots of models with ANOVA tests. The model that generated the lowest AIC contained the independent variables of Position, Bench, Broad Jump and 3Cone. When I used ANOVA tests to check for significance in these variables and the ones excluded however, I reached different results. Changing only one interaction or variable at a time from a baseline model to a model without the variable I was testing, I found that the model did not think broad jump, or 3Cone were significant variables from my AIC generated model. Conversely, it found 40 yard, Height, and the interaction between Position and  40 yard to be significant. An ANOVA test comparing a model to a model without Team found the p-value to be .07. Although it may not be significant at the .05 level, one of the primary questions I wanted to answer is if certain teams have beer better at identifying value at a statistically significant level, so I kept the variable. 
+
+The intercept of my model carries the assumption of a player who plays at the Center position for the 49ers with an average number of Bench reps, height and 40yard dash time. For this player, my model predicts a value of 1.7. 
+
+Ultimately, only bench press reps, and being drafted by the Arizona Cardinals are significant at the 0.05 level. However there are a handful of variables that are extremely close to having a p-score of .05 or lower. 
+
+Bench press has a coefficient of 0.13 and is statistically significant with a p-score of 0.01. In the context of this model, this means that if all other variables are held constant, every additional bench press rep a player does at the combine increases their expected value by 0.13 points. This is an interesting finding because it implies strength is an under-appreciated metric when evaluating players. Although I do not know how NFL teams evaluate players, from the media coverage of the draft combine it seems that a lot of attention is given to a player's athleticism in terms of their high, jumping ability, and 40 yard dash speed. It could be that with all the focus on these flashier traits, how strong a player is can get overlooked and become underappreciated. 
+
+Being drafted by the Arizona Cardinals has a coefficient of -3.49 with a statistically significant p-score. This means that holding all other things equal, being drafted by the Cardinals reduces your expected value by 3.5 points. This carries the implication that the Cardinals are especially poor at drafting and developing players. Although the Cardinals have not been a terrible franchise from 2010 to 2019, they have certainly been below average and much of their success has come as a result of players they acquired as a result of free agency rather than the draft. It is worth noting that the Cleveland Browns have a coefficient of -2.88 and just missed out on statistical significance with a pscore of 0.052. 
+
+Although insignificant at the .05 level, the interactions between 40 yard dash and running back and wide receiver barely missed the cut. They have coefficients of 17.81 and 17.59 respectively meaning that a 1 second increase in a running backs 40 yard dash speed would result in an expected increase in player value of 17.81, and an increase in player value of 17.59 for receivers. Although this initially appears quite large, a one second increase in 40 yard dash speed at these positions makes a massive difference. Speed is one of the flashiest traits at these positions, and every single year a player's draft stock increases dramatically when they run a fantastic 40 yard dash. However, speed is just one aspect that goes into a players ability, and it does not surprise me that it receives far too much focus when a player is being evaluated. 
+
+The 95% confidence intervals for the Cardinals and Bench reps can be seen below. The Cardinals ranges from -6.66 to -0.33. This means that we are 95% confident the true effect of being drafted by the cardinals has on player value falls between -6.66 to -0.33. The Bench coefficient spans from 0.03 to 0.23, meaning that we are 95% confident the true effect of every additional bench rep is an increase in value of 0.03 to 0.23
+
+```{r, out.width="70%"}
+pander(confint.default(model4, c('TeamCardinals', 'BenchCent')))
+```
+
+\newpage
+There are no violations of linearity, independence, normality, or equal variance in my model. The residuals vs fitted plot is randomly distributed, almost all the points on the Normal Q-Q lie exactly on the 45 degree line, and the standardized residual plot is random as well. From the Residuals vs Leverage graph there appear to be no high leverage points with no points falling outside of the cook's distance line. The VIF scores are all below 5 except for the positions, and 40yd dash times which are all extremely high. This is expected as the interaction term of Position and 40yd will influince this. 
+```{r, message=FALSE, include=TRUE, warning=FALSE, out.width="50%"}
+(plot(model4))
+```
+
+
+V. Conclusion
+
+This study was attempting to identify what measurables go into finding value in the draft, and what teams are significantly better or worse at identifying and developing talent. Ultimately, my model identified answers to both of these questions. The Arizona Cardinals are worse than the rest of the NFL teams at finding and drafting talent at a statistically significant level, and the Browns are not far off. Strength (as measured by bench press reps) is an undervalued attribute in the draft that appears to go somewhat overlooked by teams. Conversely, although it is not statistically significant, speed (as measured by the 40 yard dash) tends to be overvalued when evaluating running backs and wide receivers. These findings could potentially be of use to NFL teams when evaluating players. 
+
+There are limitations to this study however. The findings in this study are based on player grade data, and although this data is highly regarded, it is ultimately the aggregated opinions of a few people, and are not a perfect representation of how good a player is. While more data is always preferable, this is especially true for an analysis like this that includes a variable like team that has 32 categories. This spreads the data and results even further. Finally, there is far more that goes into evaluating a player before the draft than the variables in this study. Their college performance, and personality, and intangibles all play a role in how teams perceive and select players. My model with an R-squared of .08 reflects this fact that it does not come close to capturing the full story of player evaluation. 
+
+
+\newpage
+
+### APPENDIX
+
+```{r, echo=TRUE}
+hist(df$value)
+hist(df$Grade)
+summary(df)
+
+```
+
+
+```{r, echo=TRUE}
+### Wrapped by Position ###
+
+ggplot(df, aes(x=X40yd, y=value)) + geom_point() + facet_wrap(~Position) + geom_smooth(method="lm",col="red3")
+
+ggplot(df, aes(x=Vertical, y=value)) + geom_point() + facet_wrap(~Position) + geom_smooth(method="lm",col="red3")
+
+ggplot(df, aes(x=Bench, y=value)) + geom_point() + geom_smooth(method="lm",col="red3")
+
+ggplot(df, aes(x=Broad.Jump, y=value)) + geom_point() + facet_wrap(~Position) + geom_smooth(method="lm",col="red3")
+
+ggplot(df, aes(x=X3Cone, y=value)) + geom_point() + facet_wrap(~Position) + geom_smooth(method="lm",col="red3")
+
+ggplot(df, aes(x=Shuttle, y=value)) + geom_point() + facet_wrap(~Position) + geom_smooth(method="lm",col="red3")
+
+
+### Position EDA
+
+ggplot(df, aes(x=Position, y=value, fill=Position)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")#+  facet_wrap(~Position)
+
+
+ggplot(df, aes(x=Position, y=value, fill=Position)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")+  facet_wrap(~Round)
+
+
+ggplot(df, aes(x=Position, y=value, fill=Position)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")+  facet_wrap(~Team)
+
+
+ggplot(df, aes(x=Round, y=value, fill=Round)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")#+  facet_wrap(~Position)
+
+### ROUND EDA
+ggplot(df, aes(x=Round, y=value, fill=Round)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")+  facet_wrap(~Position)
+
+
+ggplot(df, aes(x=Round, y=value, fill=Round)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")+  facet_wrap(~Team)
+
+### TEAM
+ggplot(df, aes(x=Team, y=Grade, fill=Team)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")#+  facet_wrap(~Position)
+
+
+ggplot(df, aes(x=Team, y=Grade, fill=Team)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")+  facet_wrap(~Position)
+
+
+ggplot(df, aes(x=Team, y=Grade, fill=Team)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")+  facet_wrap(~Round)
+
+
+
+
+```
+
+```{r, echo=TRUE}
+model1 <- lmer(Grade ~ Ht + Wt +X40yd + Vertical + Bench + Broad.Jump +X3Cone + Shuttle + Round + Team + ( Ht + Wt +X40yd + Vertical + Bench + Broad.Jump +X3Cone + Shuttle | Position), data = df)
+
+summary(model1)
+
+plot(model1)
+dotplot(ranef(model1,condVar=TRUE))$Position
+```
+
+```{r, echo=TRUE}
+model2 <- lm(value ~ HtCent + WtCent +X40yd + Vertical + Bench + Broad.Jump +X3Cone + Shuttle + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench + Position:Broad.Jump + Position:X3Cone + Position:Shuttle, data = df)
+
+summary(model2)
+
+plot(model2)
+```
+
+
+```{r, echo=TRUE}
+NullModel <- lm(value ~ 1, data = df)
+FullModel <- lm(value ~ Position + HtCent + WtCent +X40yd + Vertical + Bench + Broad.Jump +X3Cone + Shuttle + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench + Position:Broad.Jump + Position:X3Cone + Position:Shuttle, data = df)
+```
+
+```{r, echo=TRUE}
+Model_stepwise <- step(NullModel, scope = formula(FullModel),direction="both",trace=0)
+Model_stepwise$call
+
+pander(summary(Model_stepwise))
+
+AIC(Model_stepwise)
+
+
+```
+
+```{r, echo=TRUE}
+a3 <- lm(value ~ HtCent + WtCent +X40yd + Vertical + Bench + Broad.Jump + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench, data = df)
+a4 <- lm(value ~ HtCent + WtCent +X40yd + Vertical + Bench + Broad.Jump + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench, data = df)
+
+
+pander(anova(a4, a3))
+```
+
+
+```{r, echo=TRUE}
+a3 <- lm(value ~ HtCent + WtCent +X40yd + Vertical + Bench + Broad.Jump + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench, data = df)
+a4 <- lm(value ~ HtCent + WtCent +X40yd + Vertical + Bench + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench, data = df)
+
+
+pander(anova(a4, a3))
+
+
+```
+
+
+```{r, echo=TRUE}
+a3 <- lm(Grade ~ HtCent + WtCent +X40yd + Vertical + Bench + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench, data = df)
+a4 <- lm(Grade ~ HtCent + WtCent +X40yd + Vertical + Bench + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical, data = df)
+
+
+pander(anova(a4, a3))
+```
+```{r, echo=TRUE}
+a3 <- lm(value ~ HtCent + WtCent +X40yd + Vertical + Bench + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical, data = df)
+a4 <- lm(value ~ HtCent + WtCent +X40yd + Vertical + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical, data = df)
+
+
+pander(anova(a4, a3))
+```
+
+```{r, echo=TRUE}
+a3 <- lm(value ~ HtCent + WtCent +X40yd + Vertical + Bench + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd, data = df)
+a4 <- lm(value ~ HtCent + WtCent +X40yd + Bench + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd, data = df)
+
+
+pander(anova(a4, a3))
+```
+
+
+
+```{r, echo=TRUE}
+a3 <- lm(value ~ HtCent + WtCent +X40yd + Bench + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd, data = df)
+a4 <- lm(value ~ HtCent + WtCent +X40yd + Bench + Round + Team + Position:HtCent + Position:WtCent, data = df)
+
+
+pander(anova(a4, a3))
+```
+
+
+```{r, echo=TRUE}
+a3 <- lm(value ~ HtCent + WtCent +X40yd + Bench + Round + Team + Position:HtCent + Position:X40yd, data = df)
+a4 <- lm(value ~ HtCent + X40yd + Bench + Round + Team + Position:HtCent + Position:X40yd, data = df)
+
+
+pander(anova(a4, a3))
+```
+
+```{r, echo=TRUE}
+a3 <- lm(value ~ HtCent + X40yd + Bench + Round + Team + Position:HtCent + Position:X40yd, data = df)
+a4 <- lm(value ~ HtCent + X40yd + Bench + Round + Team + Position:HtCent + Position:X40yd, data = df)
+
+
+pander(anova(a4, a3))
+```
+
+```{r, echo=TRUE}
+##### Model 3
+model3 <- lm(value ~ HtCent + X40yd + Bench + Round + Team + Position:HtCent + Position:X40yd, data = df)
+summary(model3)
+plot(model3)
+```
+
+
+```{r, echo=TRUE}
+df$GradePct <- (df$Grade / 100)
+
+logModel <- glm(GradePct~  HtCent + WtCent +X40yd + Vertical + Bench + Broad.Jump +X3Cone + Shuttle + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench + Position:Broad.Jump + Position:X3Cone + Position:Shuttle, family = binomial, data = df )
+
+pander(summary(logModel))
+```
+
+
+
+```{r, echo=TRUE}
+rawresid5 <- residuals(logModel,"resp")
+
+binnedplot(x=fitted(logModel),y=rawresid5,xlab="Pred. probabilities",
+           col.int="red4",ylab="Avg. residuals",main="Binned residual plot",col.pts="navy")
+```
+
+
+```{r, echo=TRUE}
+a3 <- lm(value ~ HtCent + WtCent +X40yd + Vertical + Bench + Broad.Jump +X3Cone + Shuttle + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench + Position:Broad.Jump + Position:X3Cone + Position:Shuttle, data = df)
+
+
+
+
+```
+
+
+
+```{r, echo=TRUE}
+a3 <- lm(value ~ Position + HtCent + X40yd + Bench + X3Cone + Team + Position:X40yd + Position:X3Cone, data = df)
+
+a4 <- lm(value ~ Position + HtCent + X40yd + Bench+ X3Cone + Team + Position:X40yd, data = df)
+
+pander(anova(a4, a3))
+
+```
+
+
+```{r, echo=TRUE}
+df$X40ydCent <- df$X40yd - mean(df$X40yd)
+df$BenchCent <- df$Bench - mean(df$Bench)
+model4 <- lm(value ~ Position + HtCent + X40ydCent + BenchCent +  Team + Position:X40ydCent, data = df)
+pander(summary(model4))
+
+plot(model4)
+```
+```{r, echo=TRUE}
+confint(model4)
+vif(model4)
+```
+
+
+
+
+```{r, echo=TRUE}
+
+ggplot(df,aes(x=HtCent, y=model4$residual)) +
+geom_point(alpha = .7) + geom_hline(yintercept=0,col="red3") + theme_classic() +
+labs(title="Residuals vs Value",x="value",y="Residuals")
+
+ggplot(df,aes(x=X40ydCent, y=model4$residual)) +
+geom_point(alpha = .7) + geom_hline(yintercept=0,col="red3") + theme_classic() +
+labs(title="Residuals vs Value",x="value",y="Residuals")
+
+ggplot(df,aes(x=BenchCent, y=model4$residual)) +
+geom_point(alpha = .7) + geom_hline(yintercept=0,col="red3") + theme_classic() +
+labs(title="Residuals vs Value",x="value",y="Residuals")
+
+
+```

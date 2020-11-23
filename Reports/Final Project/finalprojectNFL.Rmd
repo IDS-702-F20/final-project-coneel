@@ -1,0 +1,426 @@
+---
+title: "final"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(dplyr)
+library(ggplot2)
+library(lme4)
+library(pander)
+library(xtable)
+library(kableExtra)
+library(arm)
+library(rms) 
+library(pROC)
+library(e1071)
+library(caret)
+library(tidyverse)
+require(gridExtra)
+library(broom)
+library(sjPlot)
+```
+
+
+```{r}
+
+df <- read.csv("/Users/caleboneel/Desktop/final-project-coneel/Data/finaldata.csv")
+
+df$Position <- factor(df$Position)
+df$Round <- factor(df$Round)
+df$Team <- factor(df$Team)
+
+
+```
+
+```{r}
+hist(df$value)
+hist(df$Grade)
+summary(df)
+
+```
+
+
+```{r}
+### Wrapped by Position ###
+
+ggplot(df, aes(x=X40yd, y=value)) + geom_point() + facet_wrap(~Position) + geom_smooth(method="lm",col="red3")
+
+ggplot(df, aes(x=Vertical, y=value)) + geom_point() + facet_wrap(~Position) + geom_smooth(method="lm",col="red3")
+
+ggplot(df, aes(x=Bench, y=value)) + geom_point() + geom_smooth(method="lm",col="red3")
+
+ggplot(df, aes(x=Broad.Jump, y=value)) + geom_point() + facet_wrap(~Position) + geom_smooth(method="lm",col="red3")
+
+ggplot(df, aes(x=X3Cone, y=value)) + geom_point() + facet_wrap(~Position) + geom_smooth(method="lm",col="red3")
+
+ggplot(df, aes(x=Shuttle, y=value)) + geom_point() + facet_wrap(~Position) + geom_smooth(method="lm",col="red3")
+
+```
+
+```{r}
+
+### Position EDA
+
+ggplot(df, aes(x=Position, y=value, fill=Position)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")#+  facet_wrap(~Position)
+
+
+ggplot(df, aes(x=Position, y=value, fill=Position)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")+  facet_wrap(~Round)
+
+
+ggplot(df, aes(x=Position, y=value, fill=Position)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")+  facet_wrap(~Team)
+
+
+```
+
+```{r}
+#### Round EDA
+
+ggplot(df, aes(x=Round, y=Grade, fill=Round)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")#+  facet_wrap(~Position)
+
+
+ggplot(df, aes(x=Round, y=value, fill=Round)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")+  facet_wrap(~Position)
+
+
+ggplot(df, aes(x=Round, y=value, fill=Round)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")+  facet_wrap(~Team)
+
+
+
+
+```
+
+```{r}
+
+
+ggplot(df, aes(x=Team, y=Grade, fill=Team)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")#+  facet_wrap(~Position)
+
+
+ggplot(df, aes(x=Team, y=Grade, fill=Team)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")+  facet_wrap(~Position)
+
+
+ggplot(df, aes(x=Team, y=Grade, fill=Team)) + geom_boxplot() + scale_fill_brewer(palette="Reds") +  labs(title="Position vs value", x="position",y="value") + theme_classic() + theme(legend.position="none")+  facet_wrap(~Round)
+
+
+
+
+```
+
+```{r}
+model1 <- lmer(Grade ~ Ht + Wt +X40yd + Vertical + Bench + Broad.Jump +X3Cone + Shuttle + Round + Team + ( Ht + Wt +X40yd + Vertical + Bench + Broad.Jump +X3Cone + Shuttle | Position), data = df)
+```
+
+```{r}
+summary(model1)
+```
+
+```{r}
+```
+
+```{r}
+#### Model 2
+df$HtCent <- df$Ht - mean(df$Ht)
+df$WtCent <- df$Wt - mean(df$Wt)
+
+model2 <- lm(value ~ HtCent + WtCent +X40yd + Vertical + Bench + Broad.Jump +X3Cone + Shuttle + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench + Position:Broad.Jump + Position:X3Cone + Position:Shuttle, data = df)
+
+summary(model2)
+```
+
+```{r}
+confint(model2)
+```
+
+
+```{r}
+plot(model2)
+
+
+
+```
+
+
+```{r}
+vif(model2)
+```
+
+```{r}
+NullModel <- lm(value ~ 1, data = df)
+FullModel <- lm(value ~ Position + HtCent + WtCent +X40yd + Vertical + Bench + Broad.Jump +X3Cone + Shuttle + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench + Position:Broad.Jump + Position:X3Cone + Position:Shuttle, data = df)
+```
+
+```{r}
+Model_stepwise <- step(NullModel, scope = formula(FullModel),direction="both",trace=0)
+Model_stepwise$call
+
+pander(summary(Model_stepwise))
+
+AIC(Model_stepwise)
+n <- nrow
+Model_stepwise_bic <- step(NullModel, scope = formula(FullModel),direction="both",trace=0,
+                      k = log(n))
+```
+
+
+```{r}
+a3 <- lm(Grade ~ HtCent + WtCent +X40yd + Vertical + Bench + Broad.Jump + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench, data = df)
+a4 <- lm(Grade ~ HtCent + WtCent +X40yd + Vertical + Bench + Broad.Jump + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench, data = df)
+
+
+pander(anova(a4, a3))
+```
+
+
+```{r}
+a3 <- lm(Grade ~ HtCent + WtCent +X40yd + Vertical + Bench + Broad.Jump + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench, data = df)
+a4 <- lm(Grade ~ HtCent + WtCent +X40yd + Vertical + Bench + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench, data = df)
+
+
+pander(anova(a4, a3))
+
+
+```
+
+
+```{r}
+a3 <- lm(Grade ~ HtCent + WtCent +X40yd + Vertical + Bench + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench, data = df)
+a4 <- lm(Grade ~ HtCent + WtCent +X40yd + Vertical + Bench + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical, data = df)
+
+
+pander(anova(a4, a3))
+```
+```{r}
+a3 <- lm(Grade ~ HtCent + WtCent +X40yd + Vertical + Bench + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical, data = df)
+a4 <- lm(Grade ~ HtCent + WtCent +X40yd + Vertical + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical, data = df)
+
+
+pander(anova(a4, a3))
+```
+
+```{r}
+a3 <- lm(Grade ~ HtCent + WtCent +X40yd + Vertical + Bench + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd, data = df)
+a4 <- lm(Grade ~ HtCent + WtCent +X40yd + Bench + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd, data = df)
+
+
+pander(anova(a4, a3))
+```
+
+
+
+```{r}
+a3 <- lm(Grade ~ HtCent + WtCent +X40yd + Bench + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd, data = df)
+a4 <- lm(Grade ~ HtCent + WtCent +X40yd + Bench + Round + Team + Position:HtCent + Position:WtCent, data = df)
+
+
+pander(anova(a4, a3))
+```
+
+
+```{r}
+a3 <- lm(alue ~ HtCent + WtCent +X40yd + Bench + Round + Team + Position:HtCent + Position:X40yd, data = df)
+a4 <- lm(Grade ~ HtCent + X40yd + Bench + Round + Team + Position:HtCent + Position:X40yd, data = df)
+
+
+pander(anova(a4, a3))
+```
+
+```{r}
+a3 <- lm(Grade ~ HtCent + X40yd + Bench + Round + Team + Position:HtCent + Position:X40yd, data = df)
+a4 <- lm(Grade ~ HtCent + X40yd + Bench + Round + Team + Position:HtCent + Position:X40yd, data = df)
+
+
+pander(anova(a4, a3))
+```
+
+
+
+```{r}
+##### Model 3
+model3 <- lm(value ~ HtCent + X40yd + Bench + Round + Team + Position:HtCent + Position:X40yd, data = df)
+summary(model3)
+
+```
+
+
+
+
+```{r}
+plot(model3)
+
+```
+
+
+```{r}
+
+vif(model3)
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+df$GradePct <- (df$Grade / 100)
+```
+
+
+
+```{r}
+logModel <- glm(GradePct~  HtCent + WtCent +X40yd + Vertical + Bench + Broad.Jump +X3Cone + Shuttle + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench + Position:Broad.Jump + Position:X3Cone + Position:Shuttle, family = binomial, data = df )
+
+pander(summary(logModel))
+```
+
+
+
+```{r}
+rawresid5 <- residuals(logModel,"resp")
+
+binnedplot(x=fitted(logModel),y=rawresid5,xlab="Pred. probabilities",
+           col.int="red4",ylab="Avg. residuals",main="Binned residual plot",col.pts="navy")
+```
+
+
+
+
+```{r}
+df$valuePCT <- (df$value/100)
+```
+
+```{r}
+logModel2 <- glm(valuePCT~ HtCent + X40yd + Bench + Round + Team + Position:HtCent + Position:X40yd, family = binomial, data = df )
+
+pander(summary(logModel2))
+
+
+```
+
+
+
+```{r}
+a3 <- lm(value ~ HtCent + WtCent +X40yd + Vertical + Bench + Broad.Jump +X3Cone + Shuttle + Round + Team + Position:HtCent + Position:WtCent + Position:X40yd + Position:Vertical + Position:Bench + Position:Broad.Jump + Position:X3Cone + Position:Shuttle, data = df)
+
+
+
+
+```
+
+
+
+```{r}
+a3 <- lm(value ~ Position + HtCent + X40yd + Bench + X3Cone + Team + Position:X40yd + Position:X3Cone, data = df)
+
+a4 <- lm(value ~ Position + HtCent + X40yd + Bench+ X3Cone + Team + Position:X40yd, data = df)
+
+
+pander(anova(a4, a3))
+
+```
+
+
+```{r}
+df$X40ydCent <- df$X40yd - mean(df$X40yd)
+df$BenchCent <- df$Bench - mean(df$Bench)
+model4 <- lm(value ~ Position + HtCent + X40ydCent + BenchCent +  Team + Position:X40ydCent, data = df)
+pander(summary(model4))
+
+plot(model4)
+```
+
+
+
+
+```{r}
+confint(model4)
+vif(model4)
+```
+
+
+
+
+```{r}
+
+ggplot(df,aes(x=value, y=model4$residual)) +
+geom_point(alpha = .7) + geom_hline(yintercept=0,col="red3") + theme_classic() +
+labs(title="Residuals vs Value",x="value",y="Residuals")
+```
+
+
+
+```{r}
+
+
+```
+
+
+
+```{r}
+
+
+```
+
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+
+```{r}
+
+
+```
+
+
+
+```{r}
+
+
+```
+
+
+
+```{r}
+
+
+```
+
+
+
+```{r}
+
+
+```
+
+
+
+```{r}
+
+
+```
+
+
+
+```{r}
+
+
+```
